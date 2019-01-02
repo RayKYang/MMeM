@@ -1,70 +1,122 @@
-library(MASS)
-library(Matrix)
-library(psych)
+###HendersonIII
+
+#' Multivariate Henderson3 method
+#' @param fml two-sided linear formula object describing both the fixed-effects and random-effects  parts  of  the  model,
+#'  with  the  response  on  the  left  of  a ~ operator. For univariate response, put variable name directly; for multivariate responses
+#'  combine variables using concatenate operator, for example, for bivariate responses, c(var1, var2).  The predictor terms are separated  by + operators,  on  the  right.   Random-effects  terms  are
+#' distinguished by vertical bars '|' separating expressions for design matrices from grouping factors.
+#' @param data data frame containing the variables named in formula.
+#' @param factor_X (logical) indicating whether predictor is a factor or continuous. By default is TRUE
+#' @examples
+#' \dontrun{
+#' data(simdata)
+#' results_henderson <- MMeM_henderson3(fml = c(V1,V2) ~ X_vec + (1|Z_vec),
+#' data = simdata, factor_X = TRUE)
+#' }
+#' @return \code{T.estimates} is the estimated matrix of the variance covariance matrix of the block random effects with corresponding standard errors;
+#' \code{E.estimates} is the estimated matrix of the variance covariance matrix of the residuals with corresponding standard errors;
+#'
+#' @references Wesolowska‐Janczarek, M. T. "Estimation of covariance matrices in unbalanced random and mixed multivariate models." Biometrical journal 26.6 (1984): 665-674.
+#' @importFrom psych tr
+#' @importFrom stringr str_extract_all
+#' @export
+MMeM_henderson3 <- function(fml, data, factor_X){
+  data_matrix = MMeM_terms(fml ,data, factor_X = factor_X)
+  X = data_matrix$X
+  Y = data_matrix$Y
+  Z = data_matrix$Z
+  N = data_matrix$N
+  I = data_matrix$I
+  q = data_matrix$q
+  DV = data_matrix$DV
+
+  HX<-X%*%MASS::ginv(t(X)%*%X)%*%t(X)
+  XZ<- cbind(X,Z)
+  HXZ<-XZ%*%MASS::ginv(t(XZ)%*%XZ)%*%t(XZ)
+  C_E = (I - HXZ)
+  C_D = HXZ - HX
+  C_T = C_D-C_E*psych::tr(C_D)/psych::tr(C_E)
 
 
-Z<-matrix(c(1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1),9,3)
-ZtZ<-Z%*%t(Z)
-X<-cbind(rep(1,9),rep(c(1,2,3),3))
-B<-matrix(c(2,3,2.5,3.5),2,2)
-T<-matrix(c(1,0.5,0.5,1),2,2)
-E<-matrix(c(1,0.3,0.3,1),2,2)
-I<-diag(1,9)
-N<-nrow(I)
 
-n<-10000
-E_result<-matrix(0,n,4)
-D_result<-matrix(0,n,4)
-B_result<-matrix(0,n,4)
-E_anova<-matrix(0,n,4)
-D_anova<-matrix(0,n,4)
-for (i in 1:n){
-  U<-mvrnorm(n=3,mu=c(0,0), Sigma=T)
-  E<-mvrnorm(n=9,mu=c(0,0), Sigma=E)
+  E_aov<-(t(Y)%*%C_E%*%Y)/psych::tr(C_E)
+  cov_E = (2/psych::tr(C_E))*(E_aov%x%E_aov)
+  E.variance<- unique(diag(cov_E))
+  E.estimates = E_aov[upper.tri(E_aov,diag=TRUE)]
+  E_results = rbind(E.estimates, E.variance)
 
-  Y<-X%*%B+Z%*%U+E
-  HX<-X%*%ginv(t(X)%*%X)%*%t(X)
-  XZ<- cbind(X,Z[,-3])
-  HXZ<-XZ%*%ginv(t(XZ)%*%XZ)%*%t(XZ)
-  Pz<-Z%*%ginv(t(Z)%*%Z)%*%t(Z)
-  Qz<-I-Pz
-  QzY<-Qz%*%(X%*%B+Z%*%U+E)
-  PzY<-Pz%*%(X%*%B+Z%*%U+E)
-  QzX<-Qz%*%X
-  PzX<-Pz%*%X
-  QzH<-QzX%*%ginv(t(QzX)%*%QzX)%*%t(QzX)
-  PzH<-PzX%*%ginv(t(PzX)%*%PzX)%*%t(PzX)
-  SSE_Q<-t(QzY)%*%QzY-t(QzY)%*%QzH%*%QzY
-  SSE_P<-t(PzY)%*%PzY-t(PzY)%*%PzH%*%PzY
+  T_aov = (t(Y)%*%C_T%*%Y)/psych::tr(Z%*%t(Z)%*%(I-HX))
+  D_aov = (t(Y)%*%C_D%*%Y)
+  cov_D = (2/psych::tr(C_D))*(D_aov%x%D_aov)
 
-  Lambda_E<-SSE_Q/(tr(Qz)-rankMatrix(QzX)[1])
-  Lambda_U<-SSE_P/(tr(Pz)-rankMatrix(PzX)[1])
-  D_tilda<-(Lambda_U-Lambda_E)/3
-  B_tilda<-ginv(t(PzX)%*%PzX)%*%t(PzX)%*%PzY
-  E_result[i,]<-c(Lambda_E)
-  D_result[i,]<-c(D_tilda)
-  B_result[i,]<-c(B_tilda)
+  cov_T<- (cov_D + cov_E*(psych::tr(C_D))^2)/(psych::tr(Z%*%t(Z)%*%(I-HX)))^2
+  T.variance = unique(diag(cov_T))
+  T.estimates = T_aov[upper.tri(T_aov,diag=TRUE)]
+  T_results = rbind(T.estimates, T.variance)
 
-  ###HendersonIII
-  SSE<-t(Y)%*%Y-t(Y)%*%HXZ%*%Y
-  E_aov<-SSE/sum(diag(I-HXZ))
-  E_anova[i,]<-E_aov
-  SSD<-t(Y)%*%HXZ%*%Y-t(Y)%*%HX%*%Y
-  D_aov<-(SSD-E_aov*sum(diag(HXZ-HX)))/tr(Z%*%t(Z)%*%(I-HX))
-  D_anova[i,]<-D_aov
+  Tnames = c()
+  Enames = c()
+  for(i in 1:q){
+    for(j in i:q){
+      Y_names = paste(DV[i:j], collapse = " ")
+      Tnames = c(Tnames, paste('T:', Y_names))
+      Enames = c(Enames, paste('E:', Y_names))
+    }
+  }
+
+  colnames(T_results) = Tnames
+  colnames(E_results) = Enames
+
+  return(list(T.estimates = T_results, E.estimates = E_results))
+}
+##utility functions
+MMeM_terms <- function(fml, data, factor_X){
+
+  Fml = stats::formula(fml)
+  any_RE <- length( lme4::findbars(Fml))
+
+  if(any_RE == 0){
+    stop('No random effects in the model')
+  } else{
+    df = stats::get_all_vars(Fml, data)
+
+    terms = attr(stats::terms.formula(Fml), 'variables')
+    DVs = all.names(terms[2])
+    if(length(DVs) == 3){
+      message(paste('Bivariate response:', DVs[2], 'and', DVs[3]))
+      Y = as.matrix(df[,match(DVs[2:length(DVs)], colnames(df))])
+      DV = c(DVs[2], DVs[3])
+    }else if(length(DVs) == 1){
+      message(paste('Univariate response:', DVs[1:length(DVs)]))
+      Y = as.matrix(df[,match(DVs[1:length(DVs)], colnames(df))])
+      DV = DVs[1]
+    }else{
+      stop('Dependent variables should be univariate or bivariate.')
+    }
+
+    re_term = stringr::str_extract_all(format(terms[length(terms)]), "(?<=\\|).+?(?=\\))")[[1]]
+    re_strip = gsub(" ", "", re_term, fixed = TRUE)
+    re_data = df[,match(re_strip, colnames(df))]
+    Z = stats::model.matrix(~ -1 + factor(re_data))
+
+    IV = all.names(terms[-c(1,2,length(terms))])
+    IV_data = df[,match(IV, colnames(df))]
+    if(factor_X == TRUE){
+      X = stats::model.matrix(~ factor(IV_data))
+    }else{
+      X = stats::model.matrix(~ IV_data)
+    }
+
+
+    N = nrow(X)
+    I = diag(1, N)
+    q = ncol(as.matrix(Y))
+  }
+
+  return(list(X = X, Z = Z, Y = Y, N =N, I =I, q=q, DV = DV))
 }
 
-rbind(colMeans(E_result),apply(E_result,2, sd))
-rbind(colMeans(D_result),apply(D_result,2, sd))
-#colMeans(B_result)
-rbind(colMeans(E_anova),apply(E_anova,2, sd))
-rbind(colMeans(D_anova),apply(D_anova,2, sd))
 
-b<-sum(diag(Qz-QzH))
-a<-sum(diag(Pz-PzH))
-t<-3
-c<-tr(I-HXZ)
-d<-tr(HXZ-HX)
-e<-tr(Z%*%t(Z)%*%(I-HX))
-A<-(b*Pz%*%(I-PzH)%*%Pz-a*Qz%*%(I-QzH)%*%Qz)/(a*b*t)
-B<-(HXZ-HX-d*(I-HXZ)/c)/e
+
+
+
